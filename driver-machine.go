@@ -6,8 +6,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/kuttiproject/drivercore"
+	"github.com/kuttiproject/kuttilog"
 	"github.com/kuttiproject/workspace"
 )
 
@@ -51,17 +53,11 @@ func (d *Driver) NewMachine(machinename string, clustername string, k8sversion s
 		return nil, fmt.Errorf("cached image not found for K8s version %s at %s: %v", k8sversion, imagePath, err)
 	}
 
-	// 2. Prepare VM disks directory
-	cacheDir, err := qemuCacheDir()
+	// 2. Prepare VM disks directory in /var/tmp/kutti
+	disksDir, err := qemuDisksDir()
 	if err != nil {
 		return nil, err
 	}
-	disksDir := filepath.Join(cacheDir, "disks")
-	err = os.MkdirAll(disksDir, 0777)
-	if err != nil {
-		return nil, err
-	}
-	_ = os.Chmod(disksDir, 0777)
 
 	// 3. Copy image file to VM disk path
 	diskPath := filepath.Join(disksDir, qname+".qcow2")
@@ -113,10 +109,30 @@ func (d *Driver) NewMachine(machinename string, clustername string, k8sversion s
       <mac address='%s'/>
       <model type='virtio'/>
     </interface>
+    <serial type='pty'>
+      <target type='isa-serial' port='0'>
+        <model name='isa-serial'/>
+      </target>
+    </serial>
+    <console type='pty'>
+      <target type='serial' port='0'/>
+    </console>
+    <graphics type='vnc' port='-1' autoport='yes' listen='127.0.0.1'>
+      <listen type='address' address='127.0.0.1'/>
+    </graphics>
+    <video>
+      <model type='vga' vram='16384' heads='1' primary='yes'/>
+    </video>
   </devices>
 </domain>`, qname, d.qemuPath, diskPath, netname, mac)
 
 	// Write domain XML to temp file
+	cacheDir, err := qemuCacheDir()
+	if err != nil {
+		workspace.RemoveFile(diskPath)
+		d.runVirsh("net-update", netname, "delete", "ip-dhcp-host", hostXML, "--live", "--config")
+		return nil, err
+	}
 	xmlPath := filepath.Join(cacheDir, qname+".xml")
 	err = os.WriteFile(xmlPath, []byte(xmlContent), 0644)
 	if err != nil {
@@ -133,15 +149,48 @@ func (d *Driver) NewMachine(machinename string, clustername string, k8sversion s
 		return nil, fmt.Errorf("failed to define VM %s: %v", qname, err)
 	}
 
-	m := &Machine{
+	newmachine := &Machine{
 		driver:      d,
 		name:        machinename,
 		clustername: clustername,
 		qname:       qname,
 	}
-	m.Status() // Load initial status
+	newmachine.Status() // Load initial status
 
-	return m, nil
+	// Start Machine
+	kuttilog.Println(kuttilog.Info, "Starting host...")
+	err = newmachine.Start()
+	if err != nil {
+		return newmachine, err
+	}
+
+	// TODO: Try to parameterize the timeout
+	newmachine.WaitForStateChange(25)
+
+	// Change the name
+	for renameretries := 1; renameretries < 4; renameretries++ {
+		kuttilog.Printf(kuttilog.Info, "Renaming host (attempt %v/3)...", renameretries)
+		// err = renamemachine(newmachine, machinename)
+		err = newmachine.ExecuteCommand(drivercore.RenameMachine, machinename)
+		if err == nil {
+			break
+		}
+		kuttilog.Printf(kuttilog.Info, "Failed. Waiting %v seconds before retry...", renameretries*10)
+		time.Sleep(time.Duration(renameretries*10) * time.Second)
+	}
+
+	if err != nil {
+		return newmachine, err
+	}
+
+	kuttilog.Println(kuttilog.Info, "Host renamed.")
+
+	kuttilog.Println(kuttilog.Info, "Stopping host...")
+	newmachine.Stop()
+
+	newmachine.status = drivercore.MachineStatusStopped
+
+	return newmachine, nil
 }
 
 // DeleteMachine stops, undefines the VM, removes its lease, and deletes its disk file.
@@ -163,9 +212,9 @@ func (d *Driver) DeleteMachine(machinename string, clustername string) error {
 	_, undefineErr := d.runVirsh("undefine", qname)
 
 	// Delete disk file
-	cacheDir, err := qemuCacheDir()
+	disksDir, err := qemuDisksDir()
 	if err == nil {
-		diskPath := filepath.Join(cacheDir, "disks", qname+".qcow2")
+		diskPath := filepath.Join(disksDir, qname+".qcow2")
 		_ = workspace.RemoveFile(diskPath)
 	}
 
@@ -277,4 +326,16 @@ func (d *Driver) getVMNetworkConfig(qname string) (mac string, ip string, err er
 	ip = hostEntry[ipIdx+4 : ipIdx+4+ipEnd]
 
 	return mac, ip, nil
+}
+
+func qemuDisksDir() (string, error) {
+	disksDir := "/var/tmp/kutti/driver-qemu/disks"
+	err := os.MkdirAll(disksDir, 0777)
+	if err != nil {
+		return "", err
+	}
+	_ = os.Chmod("/var/tmp/kutti", 0777)
+	_ = os.Chmod("/var/tmp/kutti/driver-qemu", 0777)
+	_ = os.Chmod(disksDir, 0777)
+	return disksDir, nil
 }
