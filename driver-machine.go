@@ -44,6 +44,14 @@ func (d *Driver) NewMachine(machinename string, clustername string, k8sversion s
 	qname := d.QualifiedMachineName(machinename, clustername)
 	netname := d.QualifiedNetworkName(clustername)
 
+	// Fail fast if a domain with this name already exists, before anything
+	// (disk, DHCP lease) is touched. Discovering this later, via `virsh
+	// define` failing, means steps 3-5 have already mutated shared state
+	// for this qname.
+	if _, err := d.runVirsh("dominfo", qname); err == nil {
+		return nil, fmt.Errorf("machine %s already exists in cluster %s", machinename, clustername)
+	}
+
 	// 1. Get the local cached image
 	imagePath, err := imagepathfromk8sversion(k8sversion)
 	if err != nil {
@@ -59,16 +67,39 @@ func (d *Driver) NewMachine(machinename string, clustername string, k8sversion s
 		return nil, err
 	}
 
-	// 3. Copy image file to VM disk path
-	diskPath := filepath.Join(disksDir, qname+".qcow2")
-	const BUFSIZE = 131072
-	err = workspace.CopyFile(imagePath, diskPath, BUFSIZE, true)
+	// 3. Create a differencing disk backed by the cached master image.
+	// The master image is never copied or modified; this VM's disk only
+	// stores the deltas from it. The master image path is stored inside
+	// the new disk's qcow2 header, so it must remain at this exact path
+	// and remain unchanged for as long as this machine (or any other
+	// machine backed by it) exists.
+	imagePath, err = filepath.Abs(imagePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to copy image disk: %v", err)
+		return nil, fmt.Errorf("failed to resolve absolute path for image %s: %v", imagePath, err)
+	}
+	_ = os.Chmod(imagePath, 0644) // Ensure libvirt-qemu can read the backing file
+
+	diskPath := filepath.Join(disksDir, qname+".qcow2")
+	_, err = d.runQemuImg(
+		"create",
+		"-f", "qcow2",
+		"-F", "qcow2", // Pin the backing file's format explicitly; never let qemu probe it.
+		"-b", imagePath,
+		diskPath,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create differencing disk: %v", err)
 	}
 	_ = os.Chmod(diskPath, 0666) // Allow read/write by other processes (like libvirt-qemu)
 
-	// 4. Resolve free IP and MAC on the network
+	// 4. Resolve free IP and MAC on the network.
+	// First, clear out any stale DHCP lease left behind by a previous
+	// failed attempt to create this exact machine (e.g. if an earlier
+	// run got this far but failed later, at Start() or during guest
+	// rename). Without this, a retry can collide with its own leftover
+	// lease. This is a no-op if no stale entry exists.
+	d.removeStaleDHCPHostEntries(netname, qname)
+
 	ip, mac, err := d.findNextFreeIPAndMAC(netname)
 	if err != nil {
 		workspace.RemoveFile(diskPath)
@@ -161,7 +192,11 @@ func (d *Driver) NewMachine(machinename string, clustername string, k8sversion s
 	kuttilog.Println(kuttilog.Info, "Starting host...")
 	err = newmachine.Start()
 	if err != nil {
-		return newmachine, err
+		kuttilog.Printf(kuttilog.Info, "Failed to start host: %v. Rolling back...", err)
+		if delErr := d.DeleteMachine(machinename, clustername); delErr != nil {
+			kuttilog.Printf(kuttilog.Info, "Rollback also failed: %v", delErr)
+		}
+		return nil, fmt.Errorf("could not start machine %s: %v", machinename, err)
 	}
 
 	// TODO: Try to parameterize the timeout
@@ -180,7 +215,11 @@ func (d *Driver) NewMachine(machinename string, clustername string, k8sversion s
 	}
 
 	if err != nil {
-		return newmachine, err
+		kuttilog.Printf(kuttilog.Info, "Failed to rename host after 3 attempts: %v. Rolling back...", err)
+		if delErr := d.DeleteMachine(machinename, clustername); delErr != nil {
+			kuttilog.Printf(kuttilog.Info, "Rollback also failed: %v", delErr)
+		}
+		return nil, fmt.Errorf("could not rename machine %s: %v", machinename, err)
 	}
 
 	kuttilog.Println(kuttilog.Info, "Host renamed.")
@@ -223,6 +262,46 @@ func (d *Driver) DeleteMachine(machinename string, clustername string) error {
 	}
 
 	return nil
+}
+
+// removeStaleDHCPHostEntries deletes any existing DHCP host entries for
+// qname from netname. Static leases in this driver are keyed by qname
+// (there should only ever be one), so this makes lease allocation
+// idempotent: if a previous attempt to create this exact machine failed
+// partway through and left a lease behind, this clears it out before a
+// fresh one is computed and added. It is a no-op if no entry exists.
+func (d *Driver) removeStaleDHCPHostEntries(netname string, qname string) {
+	xmlOut, err := d.runVirsh("net-dumpxml", netname)
+	if err != nil {
+		return
+	}
+
+	nameSearch := fmt.Sprintf("name='%s'", qname)
+	pos := 0
+	for {
+		i := strings.Index(xmlOut[pos:], nameSearch)
+		if i == -1 {
+			return
+		}
+		absIdx := pos + i
+
+		entryStart := strings.LastIndex(xmlOut[:absIdx], "<host ")
+		if entryStart == -1 {
+			pos = absIdx + len(nameSearch)
+			continue
+		}
+		relEnd := strings.Index(xmlOut[entryStart:], "/>")
+		if relEnd == -1 {
+			pos = absIdx + len(nameSearch)
+			continue
+		}
+		entryEnd := entryStart + relEnd + len("/>")
+		hostEntry := xmlOut[entryStart:entryEnd]
+
+		_, _ = d.runVirsh("net-update", netname, "delete", "ip-dhcp-host", hostEntry, "--live", "--config")
+
+		pos = entryEnd
+	}
 }
 
 // findNextFreeIPAndMAC resolves a free IP and MAC on a given network.

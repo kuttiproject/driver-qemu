@@ -11,12 +11,13 @@ import (
 
 	driverqemu "github.com/kuttiproject/driver-qemu"
 	"github.com/kuttiproject/drivercore/drivercoretest"
+	"github.com/kuttiproject/kuttilog"
 	"github.com/kuttiproject/workspace"
 )
 
 const (
 	TESTK8SVERSION = "1.35"
-	imageSource    = "/home/rajch/projects/kuttiproject/driver-qemu-images/output-kutti-qemu/kutti-qemu.qcow2"
+	imageSource    = "/home/rajch/projects/kuttiproject/driver-qemu-images/out/kutti-qemu/kutti-qemu.qcow2"
 )
 
 func TestDriverQemu(t *testing.T) {
@@ -91,5 +92,6 @@ func TestDriverQemu(t *testing.T) {
 	driverqemu.ImagesSourceURL = "http://localhost:8181/images.json"
 
 	t.Log("Starting drivercoretest suite...")
+	kuttilog.SetLogLevel(kuttilog.Debug)
 	drivercoretest.TestDriver(t, "qemu", TESTK8SVERSION)
 }

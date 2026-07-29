@@ -108,6 +108,13 @@ func (d *Driver) runVirsh(args ...string) (string, error) {
 	return workspace.RunWithResults(d.virshPath, args...)
 }
 
+func (d *Driver) runQemuImg(args ...string) (string, error) {
+	if !d.validate() {
+		return "", errors.New(d.errormessage)
+	}
+	return workspace.RunWithResults(d.qemuImgPath, args...)
+}
+
 func init() {
 	driver := &Driver{}
 	drivercore.RegisterDriver(driverName, driver)

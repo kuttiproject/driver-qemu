@@ -155,9 +155,9 @@ func (m *Machine) ExecuteCommand(command drivercore.PredefinedCommand, params ..
 		return errors.New("machine does not have an SSH address")
 	}
 
-	// Weave / Kutti uses 'kuttiadmin' / 'Pass@word1'
+	// Qemu Kutti image uses 'kuttiadmin' / 'Pass@word1'
 	client := sshclient.NewWithPassword("kuttiadmin", "Pass@word1")
-	scriptPath := "/home/kuttiadmin/kutti-installscripts/set-hostname.sh"
+	scriptPath := "/opt/kutti/scripts/set-hostname.sh"
 	_, err := client.RunWithResults(sshAddr, fmt.Sprintf("sudo %s %s", scriptPath, newname))
 	return err
 }

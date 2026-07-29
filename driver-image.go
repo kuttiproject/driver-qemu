@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 
@@ -49,7 +51,8 @@ func (icd *imageconfigdata) SetDefaults() {
 }
 
 func qemuCacheDir() (string, error) {
-	return workspace.CacheSubDir("driver-qemu")
+	return qemuDisksDir()
+	//return workspace.CacheSubDir("driver-qemu")
 }
 
 func qemuConfigDir() (string, error) {
@@ -85,6 +88,30 @@ func addfromfile(k8sversion string, filepath string, checksum string) error {
 		return err
 	}
 
+	// If a cached copy of this image already exists, machines may already
+	// have differencing disks backed by it. Overwriting it in place with
+	// different content would silently corrupt every one of those disks.
+	if existingchecksum, chkerr := workspace.ChecksumFile(localfilepath); chkerr == nil {
+		if existingchecksum == checksum {
+			// Already have this exact file cached; nothing to do.
+			return nil
+		}
+
+		inuse, useerr := isImageInUse(k8sversion)
+		if useerr != nil {
+			return fmt.Errorf(
+				"cannot replace cached image for K8s version %s: could not verify it is unused: %v",
+				k8sversion, useerr,
+			)
+		}
+		if inuse {
+			return fmt.Errorf(
+				"cannot replace cached image for K8s version %s: it is in use as a backing disk by one or more machines",
+				k8sversion,
+			)
+		}
+	}
+
 	kuttilog.Println(kuttilog.Info, "Copying image to local cache...")
 	const BUFSIZE = 131072
 	err = workspace.CopyFile(filepath, localfilepath, BUFSIZE, true)
@@ -96,11 +123,103 @@ func addfromfile(k8sversion string, filepath string, checksum string) error {
 }
 
 func removefile(k8sversion string) error {
+	inuse, err := isImageInUse(k8sversion)
+	if err != nil {
+		return fmt.Errorf(
+			"cannot remove cached image for K8s version %s: could not verify it is unused: %v",
+			k8sversion, err,
+		)
+	}
+	if inuse {
+		return fmt.Errorf(
+			"cannot remove cached image for K8s version %s: it is in use as a backing disk by one or more machines",
+			k8sversion,
+		)
+	}
+
 	filename, err := imagepathfromk8sversion(k8sversion)
 	if err != nil {
 		return err
 	}
 	return workspace.RemoveFile(filename)
+}
+
+// qcowinfo is the subset of `qemu-img info --output=json` fields we need
+// to determine a qcow2 disk's backing file.
+type qcowinfo struct {
+	BackingFilename string `json:"backing-filename"`
+}
+
+// isImageInUse reports whether the cached master image for k8sversion is
+// currently set as the backing file of any differencing disk in the VM
+// disks directory. It is used to prevent removing or overwriting a master
+// image out from under machines that depend on it.
+func isImageInUse(k8sversion string) (bool, error) {
+	imagePath, err := imagepathfromk8sversion(k8sversion)
+	if err != nil {
+		return false, err
+	}
+	imagePath, err = filepath.Abs(imagePath)
+	if err != nil {
+		return false, err
+	}
+
+	disksDir, err := qemuDisksDir()
+	if err != nil {
+		return false, err
+	}
+
+	entries, err := os.ReadDir(disksDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	qemuImgPath, err := exec.LookPath("qemu-img")
+	if err != nil {
+		return false, err
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() || filepath.Ext(entry.Name()) != ".qcow2" {
+			continue
+		}
+
+		diskPath := filepath.Join(disksDir, entry.Name())
+		// -U (--force-share) lets qemu-img open the disk in shared/read-only
+		// mode even though a running machine holds qemu's image lock on it.
+		// Without this flag, inspecting a running machine's disk fails, and
+		// that's exactly the disk most likely to matter.
+		out, err := workspace.RunWithResults(qemuImgPath, "info", "-U", "--output=json", diskPath)
+		if err != nil {
+			// We cannot prove this disk isn't backed by the image in
+			// question, so we cannot conclude the image is safe to
+			// delete or overwrite. Fail closed rather than skip it.
+			return false, fmt.Errorf("could not inspect disk %s: %v", diskPath, err)
+		}
+
+		var info qcowinfo
+		if err := json.Unmarshal([]byte(out), &info); err != nil {
+			return false, fmt.Errorf("could not parse qemu-img info for %s: %v", diskPath, err)
+		}
+
+		if info.BackingFilename == "" {
+			continue
+		}
+
+		backingAbs, err := filepath.Abs(info.BackingFilename)
+		if err != nil {
+			return false, fmt.Errorf("could not resolve backing file path for %s: %v", diskPath, err)
+		}
+
+		if backingAbs == imagePath {
+			return true, nil
+		}
+	}
+
+	return false, nil
 }
 
 func fetchimagelist() error {
@@ -111,7 +230,7 @@ func fetchimagelist() error {
 	kuttilog.Printf(kuttilog.Debug, "confdir: %v\ntempfilepath: %v\n", confdir, tempfilepath)
 	kuttilog.Println(kuttilog.Info, "Fetching image list...")
 	kuttilog.Printf(kuttilog.Debug, "Fetching from %v into %v.", ImagesSourceURL, tempfilepath)
-	
+
 	err := workspace.DownloadFile(ImagesSourceURL, tempfilepath)
 	kuttilog.Printf(kuttilog.Debug, "Error: %v", err)
 	if err != nil {
