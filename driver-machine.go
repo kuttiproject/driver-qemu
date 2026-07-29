@@ -407,14 +407,9 @@ func (d *Driver) getVMNetworkConfig(qname string) (mac string, ip string, err er
 	return mac, ip, nil
 }
 
+// qemuDisksDir returns the directory where VM disks (differencing disks
+// backed by cached master images) are stored. See the comment on
+// qemuStorageRoot in driver-image.go for why this lives under /var/tmp.
 func qemuDisksDir() (string, error) {
-	disksDir := "/var/tmp/kutti/driver-qemu/disks"
-	err := os.MkdirAll(disksDir, 0777)
-	if err != nil {
-		return "", err
-	}
-	_ = os.Chmod("/var/tmp/kutti", 0777)
-	_ = os.Chmod("/var/tmp/kutti/driver-qemu", 0777)
-	_ = os.Chmod(disksDir, 0777)
-	return disksDir, nil
+	return ensureQemuStorageSubdir("disks")
 }

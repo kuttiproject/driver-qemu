@@ -50,9 +50,56 @@ func (icd *imageconfigdata) SetDefaults() {
 	icd.images = make(map[string]*Image)
 }
 
+// qemuStorageRoot is the base directory under which this driver stores
+// cached master images and VM disks.
+//
+// This deliberately uses /var/tmp rather than a location under the
+// user's home directory or an OS-standard cache directory (e.g.
+// ~/.cache). Both were tried and rejected:
+//   - Home directory: qemu, running as a distinct, unprivileged system
+//     user under libvirt's system-wide daemon (qemu:///system), needs
+//     every directory in the path to a disk file to be traversable by
+//     that user. Home directories are private (0700) by default, and
+//     making them traversable requires a manual, per-machine admin step
+//     (a POSIX ACL, or loosening the home directory itself) that
+//     libvirt does not set up automatically - not even when the
+//     directory is wrapped in a proper libvirt storage pool via `virsh
+//     pool-define-as`/`pool-build` (a well-documented libvirt gap; see
+//     e.g. Red Hat bug 714997).
+//   - OS-standard cache directories: qemu's default confinement refuses
+//     to open files under any dot-prefixed directory component (e.g.
+//     ~/.cache/...), which most per-OS cache directories are.
+//
+// /var/tmp is world-writable (mode 1777) by default on essentially
+// every distro, so it needs no manual permission setup at all - at the
+// cost of being subject to periodic clean-out by tools like
+// systemd-tmpfiles (typically only for files untouched for ~30 days, so
+// disks belonging to actively-used machines are unlikely to be swept,
+// but a long-stopped machine's disk could be). This is a known,
+// accepted trade-off, not an oversight.
+const qemuStorageRoot = "/var/tmp/kutti/driver-qemu"
+
+// ensureQemuStorageSubdir creates (if needed) and returns the given
+// subdirectory of qemuStorageRoot, chmod'ing the whole chain down to it
+// permissively so the qemu process can traverse into it regardless of
+// which user it runs as.
+func ensureQemuStorageSubdir(name string) (string, error) {
+	dir := filepath.Join(qemuStorageRoot, name)
+	if err := os.MkdirAll(dir, 0777); err != nil {
+		return "", err
+	}
+	_ = os.Chmod("/var/tmp/kutti", 0777)
+	_ = os.Chmod(qemuStorageRoot, 0777)
+	_ = os.Chmod(dir, 0777)
+
+	return dir, nil
+}
+
+// qemuCacheDir returns the directory where cached master images (and
+// scratch files related to them, such as in-progress downloads) are
+// stored.
 func qemuCacheDir() (string, error) {
-	return qemuDisksDir()
-	//return workspace.CacheSubDir("driver-qemu")
+	return ensureQemuStorageSubdir("images")
 }
 
 func qemuConfigDir() (string, error) {
