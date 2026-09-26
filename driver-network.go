@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/kuttiproject/drivercore"
+	"github.com/kuttiproject/kuttilog"
 	"github.com/kuttiproject/workspace"
 )
 
@@ -38,6 +39,8 @@ func (d *Driver) NewNetwork(clustername string) (drivercore.Network, error) {
 	dhcpStart := fmt.Sprintf("192.168.%d.10", x)
 	dhcpEnd := fmt.Sprintf("192.168.%d.250", x)
 
+	kuttilog.Printf(kuttilog.Info, "Creating network '%s' (%s on %s)...", netname, cidr, bridgeName)
+
 	xmlContent := fmt.Sprintf(`<network>
   <name>%s</name>
   <bridge name='%s' stp='on' delay='0'/>
@@ -62,12 +65,14 @@ func (d *Driver) NewNetwork(clustername string) (drivercore.Network, error) {
 	defer os.Remove(xmlPath)
 
 	// Define network
+	kuttilog.Printf(kuttilog.Debug, "Defining libvirt network from XML: %s", xmlPath)
 	_, err = d.runVirsh("net-define", xmlPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to define network %s: %v", netname, err)
 	}
 
 	// Start network
+	kuttilog.Printf(kuttilog.Debug, "Starting libvirt network %s", netname)
 	_, err = d.runVirsh("net-start", netname)
 	if err != nil {
 		d.runVirsh("net-undefine", netname)
@@ -75,6 +80,7 @@ func (d *Driver) NewNetwork(clustername string) (drivercore.Network, error) {
 	}
 
 	// Autostart network
+	kuttilog.Printf(kuttilog.Debug, "Setting autostart for libvirt network %s", netname)
 	_, _ = d.runVirsh("net-autostart", netname)
 
 	return &Network{
@@ -86,11 +92,14 @@ func (d *Driver) NewNetwork(clustername string) (drivercore.Network, error) {
 // DeleteNetwork destroys and undefines the libvirt virtual network.
 func (d *Driver) DeleteNetwork(clustername string) error {
 	netname := d.QualifiedNetworkName(clustername)
+	kuttilog.Printf(kuttilog.Info, "Deleting network '%s'...", netname)
 
 	// Stop/destroy running network bridge/iptables rules
+	kuttilog.Printf(kuttilog.Debug, "Destroying libvirt network %s", netname)
 	_, _ = d.runVirsh("net-destroy", netname)
 
 	// Undefine network definition
+	kuttilog.Printf(kuttilog.Debug, "Undefining libvirt network %s", netname)
 	_, err := d.runVirsh("net-undefine", netname)
 	if err != nil {
 		return fmt.Errorf("failed to delete network %s: %v", netname, err)
@@ -100,6 +109,7 @@ func (d *Driver) DeleteNetwork(clustername string) error {
 
 // findFreeSubnet scans existing libvirt networks to find an unused third-octet in 192.168.X.0/24.
 func (d *Driver) findFreeSubnet() (int, error) {
+	kuttilog.Println(kuttilog.Debug, "Scanning libvirt networks for free subnet in 192.168.X.0/24...")
 	output, err := d.runVirsh("net-list", "--all", "--name")
 	if err != nil {
 		return 0, err
@@ -122,6 +132,7 @@ func (d *Driver) findFreeSubnet() (int, error) {
 				_, err := fmt.Sscanf(xmlOut[idx+len("address='192.168."):], "%d", &x)
 				if err == nil {
 					usedSubnets[x] = true
+					kuttilog.Printf(kuttilog.Debug, "Found existing network '%s' using subnet 192.168.%d.0/24", netName, x)
 				}
 			}
 		}
@@ -130,6 +141,7 @@ func (d *Driver) findFreeSubnet() (int, error) {
 	// Find first unused X starting from 125
 	for x := 125; x < 255; x++ {
 		if !usedSubnets[x] {
+			kuttilog.Printf(kuttilog.Debug, "Selected free subnet 192.168.%d.0/24", x)
 			return x, nil
 		}
 	}

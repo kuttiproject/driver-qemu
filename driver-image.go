@@ -16,7 +16,7 @@ import (
 
 // ImagesVersion defines the image repository version for the current version
 // of the driver.
-const ImagesVersion = "0.4"
+var ImagesVersion = "0.1"
 
 const imagesConfigFile = "driver-qemu-images.json"
 
@@ -170,6 +170,7 @@ func addfromfile(k8sversion string, filepath string, checksum string) error {
 }
 
 func removefile(k8sversion string) error {
+	kuttilog.Printf(kuttilog.Info, "Purging cached image for Kubernetes %s...", k8sversion)
 	inuse, err := isImageInUse(k8sversion)
 	if err != nil {
 		return fmt.Errorf(
@@ -188,6 +189,7 @@ func removefile(k8sversion string) error {
 	if err != nil {
 		return err
 	}
+	kuttilog.Printf(kuttilog.Debug, "Deleting image file: %s", filename)
 	return workspace.RemoveFile(filename)
 }
 
@@ -210,6 +212,7 @@ func isImageInUse(k8sversion string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	kuttilog.Printf(kuttilog.Debug, "Checking if image %s is in use by any differencing disks", imagePath)
 
 	disksDir, err := qemuDisksDir()
 	if err != nil {
@@ -262,10 +265,12 @@ func isImageInUse(k8sversion string) (bool, error) {
 		}
 
 		if backingAbs == imagePath {
+			kuttilog.Printf(kuttilog.Debug, "Image %s is in use by disk %s", imagePath, diskPath)
 			return true, nil
 		}
 	}
 
+	kuttilog.Printf(kuttilog.Debug, "Image %s is not in use by any differencing disks", imagePath)
 	return false, nil
 }
 

@@ -73,6 +73,7 @@ func (d *Driver) NewMachine(machinename string, clustername string, k8sversion s
 	// the new disk's qcow2 header, so it must remain at this exact path
 	// and remain unchanged for as long as this machine (or any other
 	// machine backed by it) exists.
+	kuttilog.Println(kuttilog.Info, "Creating differencing disk...")
 	imagePath, err = filepath.Abs(imagePath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve absolute path for image %s: %v", imagePath, err)
@@ -80,6 +81,7 @@ func (d *Driver) NewMachine(machinename string, clustername string, k8sversion s
 	_ = os.Chmod(imagePath, 0644) // Ensure libvirt-qemu can read the backing file
 
 	diskPath := filepath.Join(disksDir, qname+".qcow2")
+	kuttilog.Printf(kuttilog.Debug, "Creating differencing disk %s backed by %s", diskPath, imagePath)
 	_, err = d.runQemuImg(
 		"create",
 		"-f", "qcow2",
@@ -105,16 +107,20 @@ func (d *Driver) NewMachine(machinename string, clustername string, k8sversion s
 		workspace.RemoveFile(diskPath)
 		return nil, fmt.Errorf("failed to find free IP/MAC: %v", err)
 	}
+	kuttilog.Printf(kuttilog.Info, "Allocating IP address '%s' and MAC '%s' on network '%s'...", ip, mac, netname)
 
 	// 5. Add static DHCP host lease
 	hostXML := fmt.Sprintf("<host mac='%s' name='%s' ip='%s'/>", mac, qname, ip)
+	kuttilog.Printf(kuttilog.Debug, "Adding DHCP host lease: %s", hostXML)
 	_, err = d.runVirsh("net-update", netname, "add", "ip-dhcp-host", hostXML, "--live", "--config")
 	if err != nil {
 		workspace.RemoveFile(diskPath)
 		return nil, fmt.Errorf("failed to add DHCP lease to network %s: %v", netname, err)
 	}
+	kuttilog.Printf(kuttilog.Info, "Obtained IP address '%v'", ip)
 
 	// 6. Generate domain XML
+	kuttilog.Println(kuttilog.Info, "Defining domain in libvirt...")
 	xmlContent := fmt.Sprintf(`<domain type='kvm'>
   <name>%s</name>
   <memory unit='KiB'>2097152</memory>
@@ -173,6 +179,7 @@ func (d *Driver) NewMachine(machinename string, clustername string, k8sversion s
 	defer os.Remove(xmlPath)
 
 	// Define the domain
+	kuttilog.Printf(kuttilog.Debug, "Defining domain from XML: %s", xmlPath)
 	_, err = d.runVirsh("define", xmlPath)
 	if err != nil {
 		workspace.RemoveFile(diskPath)
@@ -234,26 +241,31 @@ func (d *Driver) NewMachine(machinename string, clustername string, k8sversion s
 
 // DeleteMachine stops, undefines the VM, removes its lease, and deletes its disk file.
 func (d *Driver) DeleteMachine(machinename string, clustername string) error {
+	kuttilog.Printf(kuttilog.Info, "Deleting machine '%s'...", machinename)
 	qname := d.QualifiedMachineName(machinename, clustername)
 	netname := d.QualifiedNetworkName(clustername)
 
 	// Stop VM if running
+	kuttilog.Printf(kuttilog.Debug, "Destroying domain %s if running", qname)
 	_, _ = d.runVirsh("destroy", qname)
 
 	// Clean up DHCP lease
 	mac, ip, err := d.getVMNetworkConfig(qname)
 	if err == nil && mac != "" && ip != "" {
 		hostXML := fmt.Sprintf("<host mac='%s' name='%s' ip='%s'/>", mac, qname, ip)
+		kuttilog.Printf(kuttilog.Debug, "Removing DHCP lease: %s", hostXML)
 		_, _ = d.runVirsh("net-update", netname, "delete", "ip-dhcp-host", hostXML, "--live", "--config")
 	}
 
 	// Undefine domain
+	kuttilog.Printf(kuttilog.Debug, "Undefining domain %s", qname)
 	_, undefineErr := d.runVirsh("undefine", qname)
 
 	// Delete disk file
 	disksDir, err := qemuDisksDir()
 	if err == nil {
 		diskPath := filepath.Join(disksDir, qname+".qcow2")
+		kuttilog.Printf(kuttilog.Debug, "Removing differencing disk file: %s", diskPath)
 		_ = workspace.RemoveFile(diskPath)
 	}
 

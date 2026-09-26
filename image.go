@@ -6,6 +6,7 @@ import (
 	"path"
 
 	"github.com/kuttiproject/drivercore"
+	"github.com/kuttiproject/kuttilog"
 	"github.com/kuttiproject/workspace"
 )
 
@@ -52,6 +53,9 @@ func (i *Image) fetch(progress func(int64, int64)) error {
 	tempfilename := fmt.Sprintf("kutti-k8s-%s.qcow2download", i.imageK8sVersion)
 	tempfilepath := path.Join(cachedir, tempfilename)
 
+	kuttilog.Printf(kuttilog.Info, "Downloading image for Kubernetes %s...", i.imageK8sVersion)
+	kuttilog.Printf(kuttilog.Debug, "Downloading from %s to %s", i.imageSourceURL, tempfilepath)
+
 	// Download file
 	if progress != nil {
 		err = workspace.DownloadFileWithProgress(i.imageSourceURL, tempfilepath, progress)
@@ -63,8 +67,16 @@ func (i *Image) fetch(progress func(int64, int64)) error {
 	}
 	defer workspace.RemoveFile(tempfilepath)
 
+	kuttilog.Printf(kuttilog.Debug, "Downloaded image to temp file %s, adding to cache", tempfilepath)
+
 	// Verify and save to cache
-	return i.FromFile(tempfilepath)
+	err = i.FromFile(tempfilepath)
+	if err != nil {
+		return err
+	}
+
+	kuttilog.Printf(kuttilog.Info, "Finished downloading image for Kubernetes %s.", i.imageK8sVersion)
+	return nil
 }
 
 // Fetch downloads the image from its source URL.

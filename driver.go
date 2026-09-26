@@ -5,6 +5,7 @@ import (
 	"os/exec"
 
 	"github.com/kuttiproject/drivercore"
+	"github.com/kuttiproject/kuttilog"
 	"github.com/kuttiproject/workspace"
 )
 
@@ -53,33 +54,41 @@ func (d *Driver) validate() bool {
 	if err != nil {
 		d.status = "Error"
 		d.errormessage = "qemu-system-x86_64 not found on path"
+		kuttilog.Printf(kuttilog.Debug, "driver-qemu validation failed: %s", d.errormessage)
 		return false
 	}
 	d.qemuPath = qemuPath
+	kuttilog.Printf(kuttilog.Debug, "Found qemu-system-x86_64 at: %s", qemuPath)
 
 	qemuImgPath, err := exec.LookPath("qemu-img")
 	if err != nil {
 		d.status = "Error"
 		d.errormessage = "qemu-img not found on path"
+		kuttilog.Printf(kuttilog.Debug, "driver-qemu validation failed: %s", d.errormessage)
 		return false
 	}
 	d.qemuImgPath = qemuImgPath
+	kuttilog.Printf(kuttilog.Debug, "Found qemu-img at: %s", qemuImgPath)
 
 	virshPath, err := exec.LookPath("virsh")
 	if err != nil {
 		d.status = "Error"
 		d.errormessage = "virsh not found on path"
+		kuttilog.Printf(kuttilog.Debug, "driver-qemu validation failed: %s", d.errormessage)
 		return false
 	}
 	d.virshPath = virshPath
+	kuttilog.Printf(kuttilog.Debug, "Found virsh at: %s", virshPath)
 
 	// Check if libvirt connection works
-	_, err = workspace.RunWithResults(virshPath, "uri")
+	uriOut, err := workspace.RunWithResults(virshPath, "uri")
 	if err != nil {
 		d.status = "Error"
 		d.errormessage = "could not connect to libvirt daemon: " + err.Error()
+		kuttilog.Printf(kuttilog.Debug, "driver-qemu validation failed: %s", d.errormessage)
 		return false
 	}
+	kuttilog.Printf(kuttilog.Debug, "Connected to libvirt URI: %s", uriOut)
 
 	d.status = "Ready"
 	d.validated = true
@@ -105,14 +114,28 @@ func (d *Driver) runVirsh(args ...string) (string, error) {
 	if !d.validate() {
 		return "", errors.New(d.errormessage)
 	}
-	return workspace.RunWithResults(d.virshPath, args...)
+	kuttilog.Printf(kuttilog.Debug, "Executing virsh %v", args)
+	output, err := workspace.RunWithResults(d.virshPath, args...)
+	if err != nil {
+		kuttilog.Printf(kuttilog.Debug, "virsh error: %v, output: %s", err, output)
+	} else {
+		kuttilog.Printf(kuttilog.Debug, "virsh result: %s", output)
+	}
+	return output, err
 }
 
 func (d *Driver) runQemuImg(args ...string) (string, error) {
 	if !d.validate() {
 		return "", errors.New(d.errormessage)
 	}
-	return workspace.RunWithResults(d.qemuImgPath, args...)
+	kuttilog.Printf(kuttilog.Debug, "Executing qemu-img %v", args)
+	output, err := workspace.RunWithResults(d.qemuImgPath, args...)
+	if err != nil {
+		kuttilog.Printf(kuttilog.Debug, "qemu-img error: %v, output: %s", err, output)
+	} else {
+		kuttilog.Printf(kuttilog.Debug, "qemu-img result: %s", output)
+	}
+	return output, err
 }
 
 func init() {

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/kuttiproject/drivercore"
+	"github.com/kuttiproject/kuttilog"
 	"github.com/kuttiproject/sshclient"
 )
 
@@ -71,6 +72,7 @@ func (m *Machine) SSHAddress() string {
 
 // Start boots the VM via virsh.
 func (m *Machine) Start() error {
+	kuttilog.Printf(kuttilog.Debug, "Starting domain %s via virsh", m.qname)
 	_, err := m.driver.runVirsh("start", m.qname)
 	if err != nil {
 		m.status = drivercore.MachineStatusError
@@ -84,6 +86,7 @@ func (m *Machine) Start() error {
 
 // Stop stops the VM gracefully via ACPI shutdown.
 func (m *Machine) Stop() error {
+	kuttilog.Printf(kuttilog.Debug, "Stopping domain %s via virsh shutdown", m.qname)
 	_, err := m.driver.runVirsh("shutdown", m.qname)
 	if err != nil {
 		m.status = drivercore.MachineStatusError
@@ -97,6 +100,7 @@ func (m *Machine) Stop() error {
 
 // ForceStop kills the VM immediately.
 func (m *Machine) ForceStop() error {
+	kuttilog.Printf(kuttilog.Debug, "Force stopping domain %s via virsh destroy", m.qname)
 	_, err := m.driver.runVirsh("destroy", m.qname)
 	if err != nil {
 		m.status = drivercore.MachineStatusError
@@ -158,6 +162,13 @@ func (m *Machine) ExecuteCommand(command drivercore.PredefinedCommand, params ..
 	// Qemu Kutti image uses 'kuttiadmin' / 'Pass@word1'
 	client := sshclient.NewWithPassword("kuttiadmin", "Pass@word1")
 	scriptPath := "/opt/kutti/scripts/set-hostname.sh"
-	_, err := client.RunWithResults(sshAddr, fmt.Sprintf("sudo %s %s", scriptPath, newname))
+	cmdLine := fmt.Sprintf("sudo %s %s", scriptPath, newname)
+	kuttilog.Printf(kuttilog.Debug, "Executing predefined command over SSH to %s: %s", sshAddr, cmdLine)
+	out, err := client.RunWithResults(sshAddr, cmdLine)
+	if err != nil {
+		kuttilog.Printf(kuttilog.Debug, "SSH command error: %v, output: %s", err, out)
+	} else {
+		kuttilog.Printf(kuttilog.Debug, "SSH command output: %s", out)
+	}
 	return err
 }
