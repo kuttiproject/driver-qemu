@@ -11,19 +11,22 @@ import (
 
 	driverqemu "github.com/kuttiproject/driver-qemu"
 	"github.com/kuttiproject/drivercore/drivercoretest"
-	"github.com/kuttiproject/kuttilog"
 	"github.com/kuttiproject/workspace"
 )
 
 const (
-	TESTK8SVERSION = "1.35"
-	imageSource    = "/home/rajch/projects/kuttiproject/driver-qemu-images/out/kutti-qemu/kutti-qemu.qcow2"
+	TESTK8SVERSION = "1.37"
+	imageSource    = "out/testserver/kutti-" + TESTK8SVERSION + ".qcow2"
 )
 
 func TestDriverQemu(t *testing.T) {
 	// Calculate the checksum dynamically to avoid hardcoding
 	if _, err := os.Stat(imageSource); err != nil {
-		t.Fatalf("Could not locate local QEMU image at %s: %v", imageSource, err)
+		t.Fatalf(
+			"Could not locate local qemu image.\nPlease download the version %v kutti qemu image, and place it in the path out/testserver/kutti-%v.qcow2",
+			TESTK8SVERSION,
+			TESTK8SVERSION,
+		)
 	}
 
 	t.Log("Calculating image checksum...")
@@ -92,6 +95,7 @@ func TestDriverQemu(t *testing.T) {
 	driverqemu.ImagesSourceURL = "http://localhost:8181/images.json"
 
 	t.Log("Starting drivercoretest suite...")
-	kuttilog.SetLogLevel(kuttilog.Debug)
+	// Uncomment the following line to get detailed output
+	// kuttilog.SetLogLevel(kuttilog.Debug)
 	drivercoretest.TestDriver(t, "qemu", TESTK8SVERSION)
 }

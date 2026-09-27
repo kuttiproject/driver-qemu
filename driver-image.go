@@ -16,12 +16,11 @@ import (
 
 // ImagesVersion defines the image repository version for the current version
 // of the driver.
-var ImagesVersion = "0.1"
+const ImagesVersion = "0.1"
 
 const imagesConfigFile = "driver-qemu-images.json"
 
 // ImagesSourceURL is the location where the master list of images can be found.
-// This is declared as a package-level variable so tests can override it.
 var ImagesSourceURL = "https://github.com/kuttiproject/driver-qemu-images/releases/download/v" + ImagesVersion + "/" + imagesConfigFile
 
 var (
