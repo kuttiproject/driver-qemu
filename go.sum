@@ -6,6 +6,8 @@ github.com/kuttiproject/kuttilog v0.2.1 h1:7UbyfX8Gxcc89093G9EJO9+35My2ta2phivPO
 github.com/kuttiproject/kuttilog v0.2.1/go.mod h1:0vqZ0dekSN6X4Adrmbwaliv1QuogyzjsHHyjBApq6gY=
 github.com/kuttiproject/sshclient v0.2.1 h1:z6xzxMHR3Ze5epkIzJ/I+DtEm3xiZajfdRSzlI+8kXk=
 github.com/kuttiproject/sshclient v0.2.1/go.mod h1:d5OaUIgsKsEpPomKTXEltL8nLHSNJxD7u4n1t9HByWc=
+github.com/kuttiproject/sshclient v0.2.2 h1:Um2/H7Mw574cJhYlnmY5uZ/4RifmnpQsyIdXzBWiNDE=
+github.com/kuttiproject/sshclient v0.2.2/go.mod h1:d5OaUIgsKsEpPomKTXEltL8nLHSNJxD7u4n1t9HByWc=
 github.com/kuttiproject/workspace v0.3.1 h1:nf7WqlocjlkY5RPgYT1jA3rwANQacCaOiB7XoghTfG8=
 github.com/kuttiproject/workspace v0.3.1/go.mod h1:txrF8EuDRTrujaGnEGbEN39saydwmS6VzEn8q1aQpio=
 github.com/povsister/scp v0.0.0-20210427074412-33febfd9f13e h1:VtsDti2SgX7M7jy0QAyGgb162PeHLrOaNxmcYOtaGsY=
