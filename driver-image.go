@@ -76,7 +76,10 @@ func (icd *imageconfigdata) SetDefaults() {
 // disks belonging to actively-used machines are unlikely to be swept,
 // but a long-stopped machine's disk could be). This is a known,
 // accepted trade-off, not an oversight.
-const qemuStorageRoot = "/var/tmp/kutti/driver-qemu"
+//
+// It is a variable only so that tests can point it at a temporary
+// directory. Nothing else changes it.
+var qemuStorageRoot = "/var/tmp/kutti/driver-qemu"
 
 // ensureQemuStorageSubdir creates (if needed) and returns the given
 // subdirectory of qemuStorageRoot, chmod'ing the whole chain down to it
@@ -87,7 +90,7 @@ func ensureQemuStorageSubdir(name string) (string, error) {
 	if err := os.MkdirAll(dir, 0777); err != nil {
 		return "", err
 	}
-	_ = os.Chmod("/var/tmp/kutti", 0777)
+	_ = os.Chmod(filepath.Dir(qemuStorageRoot), 0777)
 	_ = os.Chmod(qemuStorageRoot, 0777)
 	_ = os.Chmod(dir, 0777)
 
