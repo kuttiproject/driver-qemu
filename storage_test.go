@@ -62,44 +62,49 @@ func TestImageNameAndPath(t *testing.T) {
 }
 
 // The directories are open to everyone, because qemu runs as another user
-// and has to get to the files. The permissions are set on the whole chain,
-// including directories that already exist.
+// and has to get to the files, and sticky, so that users cannot delete or
+// rename each other's files. The mode is set on the whole chain, including
+// directories that already exist, whether they are closed, or open and not
+// sticky, as those made by earlier versions of the driver are.
 func TestStorageDirectoryPermissions(t *testing.T) {
-	root := testStorage(t)
-
-	// Directories that exist already, and are closed.
-	parent := filepath.Dir(root)
-	if err := os.MkdirAll(filepath.Join(root, "images"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	for _, dir := range []string{parent, root, filepath.Join(root, "images")} {
-		if err := os.Chmod(dir, 0o700); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	if _, err := qemuCacheDir(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := qemuDisksDir(); err != nil {
-		t.Fatal(err)
-	}
-
-	for _, dir := range []string{
-		parent,
-		root,
-		filepath.Join(root, "images"),
-		filepath.Join(root, "disks"),
+	for name, mode := range map[string]os.FileMode{
+		"closed directories":       0o700,
+		"open directories":         0o777,
+		"open, sticky directories": os.ModeSticky | 0o777,
 	} {
-		info, err := os.Stat(dir)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if info.Mode().Perm() != 0o777 {
-			t.Errorf("%s has permissions %v, expected 0777", dir, info.Mode().Perm())
-		}
-		if info.Mode()&os.ModeSticky != 0 {
-			t.Errorf("%s has the sticky bit set", dir)
-		}
+		t.Run(name, func(t *testing.T) {
+			root := testStorage(t)
+
+			parent := filepath.Dir(root)
+			images := filepath.Join(root, "images")
+			if err := os.MkdirAll(images, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			for _, dir := range []string{parent, root, images} {
+				if err := os.Chmod(dir, mode); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if _, err := qemuCacheDir(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := qemuDisksDir(); err != nil {
+				t.Fatal(err)
+			}
+
+			for _, dir := range []string{parent, root, images, filepath.Join(root, "disks")} {
+				info, err := os.Stat(dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if info.Mode().Perm() != 0o777 {
+					t.Errorf("%s has permissions %v, expected 0777", dir, info.Mode().Perm())
+				}
+				if info.Mode()&os.ModeSticky == 0 {
+					t.Errorf("%s does not have the sticky bit set", dir)
+				}
+			}
+		})
 	}
 }

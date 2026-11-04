@@ -74,18 +74,32 @@ func init() {
 // directory. Nothing else changes it.
 var qemuStorageRoot = "/var/tmp/kutti/driver-qemu"
 
+// sharedDirMode is the mode of the directories of the storage chain: open to
+// everyone, with the sticky bit, like /var/tmp itself. Everyone can create
+// files in them and get to the files, but only the owner of a file, or of the
+// directory, can delete or rename it. Without the sticky bit, any user of the
+// machine could replace the cached image, or the disk, of another.
+//
+// The sticky bit has to be given as os.ModeSticky. The octal 01777, which is
+// what chmod takes, does not work: os.Chmod drops the 01000, and leaves the
+// directory at 0777.
+const sharedDirMode = os.ModeSticky | 0o777
+
 // ensureQemuStorageSubdir creates (if needed) and returns the given
-// subdirectory of qemuStorageRoot, chmod'ing the whole chain down to it
-// permissively so the qemu process can traverse into it regardless of
+// subdirectory of qemuStorageRoot, setting the whole chain down to it to
+// sharedDirMode, so that the qemu process can traverse into it regardless of
 // which user it runs as.
+//
+// A directory made by another user cannot be changed, and keeps the mode it
+// has. Only the owner can do that, when they next use the driver.
 func ensureQemuStorageSubdir(name string) (string, error) {
 	dir := filepath.Join(qemuStorageRoot, name)
 	if err := os.MkdirAll(dir, 0777); err != nil {
 		return "", err
 	}
-	_ = os.Chmod(filepath.Dir(qemuStorageRoot), 0777)
-	_ = os.Chmod(qemuStorageRoot, 0777)
-	_ = os.Chmod(dir, 0777)
+	_ = os.Chmod(filepath.Dir(qemuStorageRoot), sharedDirMode)
+	_ = os.Chmod(qemuStorageRoot, sharedDirMode)
+	_ = os.Chmod(dir, sharedDirMode)
 
 	return dir, nil
 }
