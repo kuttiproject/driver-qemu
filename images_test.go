@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -64,13 +65,16 @@ type imageserver struct {
 	mu       sync.Mutex
 	images   []testimage
 	listcode int
+	rawlist  string
 	files    map[string][]byte
+	hits     map[string]int
+	delay    time.Duration
 }
 
 func newImageServer(t *testing.T, images ...testimage) *imageserver {
 	t.Helper()
 
-	is := &imageserver{listcode: http.StatusOK, files: map[string][]byte{}}
+	is := &imageserver{listcode: http.StatusOK, files: map[string][]byte{}, hits: map[string]int{}}
 	is.set(images...)
 
 	is.Server = httptest.NewServer(http.HandlerFunc(is.handle))
@@ -104,6 +108,30 @@ func (is *imageserver) serveFile(version string, data []byte) {
 	is.files["/kutti-"+version+".qcow2"] = data
 }
 
+// serveRawList serves exactly this as the list, whatever it is.
+func (is *imageserver) serveRawList(body string) {
+	is.mu.Lock()
+	defer is.mu.Unlock()
+
+	is.rawlist = body
+}
+
+// slowDownFiles makes the server wait before it serves a file.
+func (is *imageserver) slowDownFiles(delay time.Duration) {
+	is.mu.Lock()
+	defer is.mu.Unlock()
+
+	is.delay = delay
+}
+
+// fileRequests returns how many times the file of an image was requested.
+func (is *imageserver) fileRequests(version string) int {
+	is.mu.Lock()
+	defer is.mu.Unlock()
+
+	return is.hits["/kutti-"+version+".qcow2"]
+}
+
 func (is *imageserver) failList(code int) {
 	is.mu.Lock()
 	defer is.mu.Unlock()
@@ -113,11 +141,24 @@ func (is *imageserver) failList(code int) {
 
 func (is *imageserver) handle(w http.ResponseWriter, r *http.Request) {
 	is.mu.Lock()
+	delay := is.delay
+	is.hits[r.URL.Path]++
+	is.mu.Unlock()
+
+	if r.URL.Path != "/"+imagesConfigFile {
+		time.Sleep(delay)
+	}
+
+	is.mu.Lock()
 	defer is.mu.Unlock()
 
 	if r.URL.Path == "/"+imagesConfigFile {
 		if is.listcode != http.StatusOK {
 			http.Error(w, "no list", is.listcode)
+			return
+		}
+		if is.rawlist != "" {
+			w.Write([]byte(is.rawlist))
 			return
 		}
 
@@ -260,8 +301,10 @@ func TestImageListQueries(t *testing.T) {
 	if current.K8sVersion() != "1.37" || current.Deprecated() {
 		t.Errorf("image 1.37 is %q, deprecated %v", current.K8sVersion(), current.Deprecated())
 	}
-	if current.Status() == drivercore.ImageStatusDownloaded {
-		t.Error("a new image is marked as downloaded")
+	// The published lists say NotDownloaded, but the status of a new image
+	// is what the local list says, which is drivercore's value.
+	if current.Status() != drivercore.ImageStatusNotDownloaded {
+		t.Errorf("the status of a new image is %q", current.Status())
 	}
 
 	img, err := d.GetImage("1.99")
@@ -617,5 +660,156 @@ func TestUpdateImageListDropsDownloadedStatusOfChangedImage(t *testing.T) {
 
 	if _, err := os.Stat(cachedImagePath(root, "1.37")); err != nil {
 		t.Error("the cached file was removed by an update")
+	}
+}
+
+// A list that cannot be used does not replace the list that works.
+func TestUpdateImageListWithBadListKeepsList(t *testing.T) {
+	testStorage(t)
+	server := newImageServer(t, testimage{version: "1.37", content: content("b", 100)})
+	updateList(t)
+
+	bad := []struct{ name, body string }{
+		{"not JSON", "this is not a list"},
+		{"version that is a path", `{"../x": {"ImageK8sVersion": "../x", "ImageChecksum": "abc", "ImageSourceURL": "http://example.com/x", "ImageStatus": "NotDownloaded"}}`},
+		{"entry for another version", `{"1.38": {"ImageK8sVersion": "1.39", "ImageChecksum": "abc", "ImageSourceURL": "http://example.com/x", "ImageStatus": "NotDownloaded"}}`},
+	}
+	for _, c := range bad {
+		server.serveRawList(c.body)
+
+		if err := (&Driver{}).UpdateImageList(); err == nil {
+			t.Errorf("%s: UpdateImageList succeeded", c.name)
+		}
+		if versions := (&Driver{}).K8sVersions(); len(versions) != 1 || versions[0] != "1.37" {
+			t.Errorf("%s: versions are %v", c.name, versions)
+		}
+	}
+}
+
+func TestImagesAreListedInVersionOrder(t *testing.T) {
+	testStorage(t)
+	newImageServer(t,
+		testimage{version: "1.37", content: content("a", 10)},
+		testimage{version: "1.10", content: content("b", 10)},
+		testimage{version: "1.9", content: content("c", 10)},
+		testimage{version: "1.100", content: content("d", 10)},
+	)
+	updateList(t)
+
+	d := &Driver{}
+	expected := "1.9,1.10,1.37,1.100"
+
+	if got := strings.Join(d.K8sVersions(), ","); got != expected {
+		t.Errorf("K8sVersions returned %s, expected %s", got, expected)
+	}
+
+	images, err := d.ListImages()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed []string
+	for _, img := range images {
+		listed = append(listed, img.K8sVersion())
+	}
+	if got := strings.Join(listed, ","); got != expected {
+		t.Errorf("ListImages returned %s, expected %s", got, expected)
+	}
+}
+
+// Two fetches of the same image, as by two kutti processes of one user, do
+// not download it twice or tread on each other.
+func TestFetchesOfOneImageAreSerialized(t *testing.T) {
+	root := testStorage(t)
+	installFakeQemuImg(t)
+	image := testimage{version: "1.37", content: content("b", 1<<20)}
+	server := newImageServer(t, image)
+	updateList(t)
+	server.slowDownFiles(300 * time.Millisecond)
+
+	first, second := getImage(t, "1.37"), getImage(t, "1.37")
+
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i, img := range []drivercore.Image{first, second} {
+		wg.Add(1)
+		go func(i int, img drivercore.Image) {
+			defer wg.Done()
+			errs[i] = img.Fetch()
+		}(i, img)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("fetch %d failed: %v", i, err)
+		}
+	}
+	if hits := server.fileRequests("1.37"); hits != 1 {
+		t.Errorf("the image was downloaded %d times", hits)
+	}
+	if string(readFile(t, cachedImagePath(root, "1.37"))) != string(image.content) {
+		t.Error("the cached file does not hold the image")
+	}
+	if names := fileNames(t, filepath.Join(root, "images")); strings.Join(names, ",") != "kutti-1.37.qcow2" {
+		t.Errorf("the cache directory holds %v", names)
+	}
+}
+
+// Machines created by older versions of the driver depend on these names.
+func TestFilesInTheConfigDirectory(t *testing.T) {
+	testStorage(t)
+	installFakeQemuImg(t)
+	newImageServer(t, testimage{version: "1.37", content: content("b", 1000)})
+	updateList(t)
+	if err := getImage(t, "1.37").Fetch(); err != nil {
+		t.Fatal(err)
+	}
+
+	dir, err := workspace.ConfigDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	names := strings.Join(fileNames(t, dir), ",")
+	expected := "driver-qemu-images-1.37.lock,driver-qemu-images.json,driver-qemu-images.lock"
+	if names != expected {
+		t.Errorf("the config directory holds %s, expected %s", names, expected)
+	}
+}
+
+// An image is downloaded into a work directory of the cache directory, so
+// that what is in progress is never taken for an image.
+func TestFetchDownloadsIntoAWorkDirInTheCache(t *testing.T) {
+	root := testStorage(t)
+	installFakeQemuImg(t)
+	newImageServer(t, testimage{version: "1.37", content: content("b", 3<<20)})
+	updateList(t)
+
+	cache := filepath.Join(root, "images")
+	var found []string
+	err := getImage(t, "1.37").FetchWithProgress(func(current int64, total int64) {
+		if found != nil {
+			return
+		}
+
+		filepath.WalkDir(cache, func(path string, d fs.DirEntry, err error) error {
+			if err == nil && !d.IsDir() {
+				rel, _ := filepath.Rel(cache, path)
+				found = append(found, rel)
+			}
+			return nil
+		})
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(found) != 1 {
+		t.Fatalf("during the download the cache directory held %v", found)
+	}
+	// The download makes its own temporary file, named for the file it will
+	// become.
+	if dir, name := filepath.Split(found[0]); dir == "" || !strings.HasPrefix(name, "kutti-k8s-1.37.qcow2download") {
+		t.Errorf("the image was downloaded into %s", found[0])
 	}
 }

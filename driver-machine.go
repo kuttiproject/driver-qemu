@@ -53,7 +53,7 @@ func (d *Driver) NewMachine(machinename string, clustername string, k8sversion s
 	}
 
 	// 1. Get the local cached image
-	imagePath, err := imagepathfromk8sversion(k8sversion)
+	imagePath, err := imagestore.ImagePath(k8sversion)
 	if err != nil {
 		return nil, err
 	}

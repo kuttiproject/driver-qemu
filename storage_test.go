@@ -49,16 +49,15 @@ func TestStorageDirectories(t *testing.T) {
 func TestImageNameAndPath(t *testing.T) {
 	root := testStorage(t)
 
-	if name := imagenamefromk8sversion("1.37"); name != "kutti-1.37.qcow2" {
-		t.Errorf("image name is %s", name)
-	}
-
-	path, err := imagepathfromk8sversion("1.37")
+	path, err := imagestore.ImagePath("1.37")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if path != cachedImagePath(root, "1.37") {
 		t.Errorf("image path is %s, expected %s", path, cachedImagePath(root, "1.37"))
+	}
+	if name := filepath.Base(path); name != "kutti-1.37.qcow2" {
+		t.Errorf("image name is %s", name)
 	}
 }
 
