@@ -54,7 +54,7 @@ func (m *Machine) Error() string {
 
 // IPAddress returns the assigned IP address of this machine.
 func (m *Machine) IPAddress() string {
-	_, ip, err := m.driver.getVMNetworkConfig(m.qname)
+	_, ip, err := m.driver.getVMNetworkConfig(m.qname, m.clustername)
 	if err != nil {
 		return ""
 	}

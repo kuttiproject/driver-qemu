@@ -250,7 +250,7 @@ func (d *Driver) DeleteMachine(machinename string, clustername string) error {
 	_, _ = d.runVirsh("destroy", qname)
 
 	// Clean up DHCP lease
-	mac, ip, err := d.getVMNetworkConfig(qname)
+	mac, ip, err := d.getVMNetworkConfig(qname, clustername)
 	if err == nil && mac != "" && ip != "" {
 		hostXML := fmt.Sprintf("<host mac='%s' name='%s' ip='%s'/>", mac, qname, ip)
 		kuttilog.Printf(kuttilog.Debug, "Removing DHCP lease: %s", hostXML)
@@ -365,7 +365,7 @@ func (d *Driver) findNextFreeIPAndMAC(netname string) (string, string, error) {
 }
 
 // getVMNetworkConfig extracts the MAC and IP of a machine from its domain XML and network XML.
-func (d *Driver) getVMNetworkConfig(qname string) (mac string, ip string, err error) {
+func (d *Driver) getVMNetworkConfig(qname string, clustername string) (mac string, ip string, err error) {
 	xmlOut, err := d.runVirsh("dumpxml", qname)
 	if err != nil {
 		return "", "", err
@@ -381,7 +381,7 @@ func (d *Driver) getVMNetworkConfig(qname string) (mac string, ip string, err er
 	if len(parts) < 3 {
 		return mac, "", nil
 	}
-	clustername := parts[1]
+	// clustername := parts[1]
 	netname := d.QualifiedNetworkName(clustername)
 
 	netXml, err := d.runVirsh("net-dumpxml", netname)
