@@ -2,8 +2,8 @@ github.com/containerd/console v1.0.4 h1:F2g4+oChYvBTsASRTz8NP6iIAi97J3TtSAsLbIFn
 github.com/containerd/console v1.0.4/go.mod h1:YynlIjWYF8myEu6sdkwKIvGQq+cOckRm6So2avqoYAk=
 github.com/kuttiproject/drivercore v0.3.1 h1:2AV16YAkTVzot07HRCgL3TRdaUdPYmcnFnH6OONvduI=
 github.com/kuttiproject/drivercore v0.3.1/go.mod h1:TCr2la1NTL2JA/gbxwyAYA9AXVFsSTVLYhIt03HM6gY=
-github.com/kuttiproject/imagecore v0.1.0 h1:YRTBdG3TD5HFueC5Ps/vm1IgF2Js8xe0DBGgfdDSi7E=
-github.com/kuttiproject/imagecore v0.1.0/go.mod h1:Uze0UFVallpCeBUMGU0Q5I3TquZF0fHVz3InpqPMIkQ=
+github.com/kuttiproject/imagecore v0.1.1 h1:K1AFDs/bCd1D578b009iud69WKeEvlrV3+UZXlK/6sw=
+github.com/kuttiproject/imagecore v0.1.1/go.mod h1:eA+ivzJWZG5e3GncqH1tyOCebmUEUppw0PNmKzFUyFk=
 github.com/kuttiproject/kuttilog v0.2.1 h1:7UbyfX8Gxcc89093G9EJO9+35My2ta2phivPOLquqWA=
 github.com/kuttiproject/kuttilog v0.2.1/go.mod h1:0vqZ0dekSN6X4Adrmbwaliv1QuogyzjsHHyjBApq6gY=
 github.com/kuttiproject/sshclient v0.2.2 h1:Um2/H7Mw574cJhYlnmY5uZ/4RifmnpQsyIdXzBWiNDE=
